@@ -338,7 +338,9 @@ class MiMoCreator:
             return self.results
             
         finally:
+            print("\n🧹 Menutup browser...")
             await browser.close()
+            print("   ✅ Browser ditutup")
 
     def _print_header(self) -> None:
         print(f"\n{'='*50}")
