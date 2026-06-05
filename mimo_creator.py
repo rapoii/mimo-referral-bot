@@ -331,10 +331,70 @@ class MiMoCreator:
     
     async def _step_solve_recaptcha(self) -> bool:
         """Menyelesaikan reCAPTCHA"""
-        # Cari tombol Next/Submit
+        print("   🔍 Mencari reCAPTCHA...")
+        
+        # Tunggu sebentar untuk reCAPTCHA muncul
+        await self.page.wait_for_timeout(3000)
+        
+        # Cari reCAPTCHA iframe
+        recaptcha_frames = self.page.locator('iframe[src*="recaptcha"], iframe[title*="reCAPTCHA"]')
+        frame_count = await recaptcha_frames.count()
+        print(f"   📊 Ditemukan {frame_count} reCAPTCHA iframe")
+        
+        if frame_count > 0:
+            # Masuk ke dalam iframe reCAPTCHA
+            frame = recaptcha_frames.first
+            content_frame = await frame.content_frame()
+            
+            if content_frame:
+                # Cari checkbox di dalam iframe
+                checkbox = content_frame.locator('#recaptcha-anchor, [role="checkbox"]')
+                if await checkbox.count() > 0:
+                    print("   ☑️  Klik reCAPTCHA checkbox...")
+                    await checkbox.click()
+                    await self.page.wait_for_timeout(5000)
+                    
+                    # Tunggu sampai checkbox tercentang (reCAPTCHA solved)
+                    max_wait = 60  # Tunggu maksimal 60 detik
+                    for i in range(max_wait):
+                        try:
+                            is_checked = await checkbox.get_attribute('aria-checked')
+                            if is_checked == 'true':
+                                print("   ✅ reCAPTCHA solved!")
+                                break
+                            
+                            # Cek apakah ada challenge (image challenge)
+                            challenge = content_frame.locator('.rc-imageselect-challenge, .challenge')
+                            if await challenge.count() > 0:
+                                print("   ⚠️  reCAPTCHA challenge muncul (image challenge)")
+                                print("   ⚠️  Script tidak bisa solve image challenge otomatis")
+                                print("   ⚠️  Silakan solve manual di browser yang terbuka")
+                                print("   ⏳ Menunggu 60 detik untuk solve manual...")
+                                # Tunggu user solve manual
+                                await self.page.wait_for_timeout(60000)
+                                break
+                            
+                            # Progress indicator
+                            if i % 10 == 0:
+                                print(f"   ⏳ Menunggu reCAPTCHA... ({i}/{max_wait}s)")
+                            
+                            await self.page.wait_for_timeout(1000)
+                        except Exception as e:
+                            print(f"   ⚠️  Error checking reCAPTCHA: {e}")
+                            await self.page.wait_for_timeout(1000)
+                else:
+                    print("   ⚠️  Checkbox reCAPTCHA tidak ditemukan di iframe")
+            else:
+                print("   ⚠️  Tidak bisa masuk ke iframe reCAPTCHA")
+        else:
+            print("   ℹ️  Tidak ada reCAPTCHA ditemukan")
+        
+        # Klik tombol Next/Submit setelah reCAPTCHA
+        print("   🔍 Mencari tombol Next/Submit...")
         next_selectors = [
             'button:has-text("Next")',
             'button:has-text("Submit")',
+            'button:has-text("Register")',
             'button[type="submit"]',
         ]
         
@@ -342,16 +402,42 @@ class MiMoCreator:
             try:
                 next_btn = self.page.locator(selector).first
                 if await next_btn.count() > 0:
-                    await next_btn.click()
-                    await self.page.wait_for_timeout(5000)
-                    print(f"   🤖 Klik {selector}")
-                    break
-            except:
+                    is_visible = await next_btn.is_visible()
+                    is_enabled = await next_btn.is_enabled()
+                    if is_visible and is_enabled:
+                        await next_btn.click()
+                        print(f"   🤖 Klik {selector}")
+                        await self.page.wait_for_timeout(5000)
+                        break
+                    else:
+                        print(f"   ⚠️  {selector} visible={is_visible}, enabled={is_enabled}")
+            except Exception as e:
+                print(f"   ⚠️  {selector} error: {e}")
                 continue
         
-        # reCAPTCHA biasanya auto-solved di Playwright
-        print("   🤖 reCAPTCHA diselesaikan")
-        return True
+        # Tunggu sampai halaman berubah (redirect ke verifikasi email)
+        print("   ⏳ Menunggu redirect ke verifikasi email...")
+        for i in range(60):  # Tunggu maksimal 60 detik
+            current_url = self.page.url
+            if 'verify' in current_url or 'code' in current_url:
+                print(f"   ✅ Redirect ke verifikasi email!")
+                return True
+            
+            # Cek apakah ada input kode verifikasi
+            code_input = self.page.locator('input[placeholder*="code"], input[name*="code"], input[placeholder*="Code"]')
+            if await code_input.count() > 0:
+                print("   ✅ Input kode verifikasi ditemukan!")
+                return True
+            
+            # Progress indicator
+            if i % 10 == 0:
+                print(f"   ⏳ Menunggu redirect... ({i}/60s)")
+            
+            await self.page.wait_for_timeout(1000)
+        
+        print("   ⚠️  Tidak redirect ke verifikasi email setelah 60 detik")
+        print(f"   📍 URL saat ini: {self.page.url}")
+        return False  # GAGAL - tidak redirect
     
     async def _step_get_verification_code(self) -> bool:
         """Mengambil kode verifikasi dari email"""
