@@ -181,33 +181,78 @@ class MiMoCreator:
     
     async def _step_click_signup(self) -> bool:
         """Klik tombol Sign up"""
-        # Coba beberapa selector
+        print("   🔍 Mencari tombol Sign up...")
+        
+        # Tunggu halaman login selesai dimuat
+        await self.page.wait_for_timeout(2000)
+        
+        # Coba beberapa selector (prioritas: text langsung dulu)
         selectors = [
-            'button:has-text("Sign up")',
             'text=Sign up',
+            'button:has-text("Sign up")',
             'a:has-text("Sign up")',
             '[data-testid="sign-up"]',
+            'div:has-text("Sign up")',
+            'span:has-text("Sign up")',
         ]
         
         for selector in selectors:
             try:
                 elem = self.page.locator(selector).first
-                if await elem.count() > 0:
-                    await elem.click()
-                    await self.page.wait_for_timeout(3000)
-                    print(f"   ✅ Klik Sign up (selector: {selector})")
-                    return True
-            except:
+                count = await elem.count()
+                if count > 0:
+                    # Pastikan elemen visible
+                    is_visible = await elem.is_visible()
+                    if is_visible:
+                        await elem.click()
+                        await self.page.wait_for_timeout(3000)
+                        print(f"   ✅ Klik Sign up (selector: {selector})")
+                        return True
+                    else:
+                        print(f"   ⚠️  {selector} ditemukan tapi tidak visible")
+            except Exception as e:
+                print(f"   ⚠️  {selector} error: {e}")
                 continue
         
-        # Fallback: coba klik elemen yang mengandung text "Sign up"
-        all_elements = self.page.locator('*:has-text("Sign up")')
-        count = await all_elements.count()
-        if count > 0:
-            await all_elements.first.click()
-            await self.page.wait_for_timeout(3000)
-            print("   ✅ Klik Sign up (fallback text)")
-            return True
+        # Fallback: cari semua elemen yang mengandung "Sign up"
+        print("   🔍 Fallback: mencari elemen dengan text 'Sign up'...")
+        try:
+            all_elements = self.page.locator('*:has-text("Sign up")')
+            count = await all_elements.count()
+            print(f"   📊 Ditemukan {count} elemen dengan 'Sign up'")
+            
+            for i in range(count):
+                elem = all_elements.nth(i)
+                try:
+                    is_visible = await elem.is_visible()
+                    if is_visible:
+                        tag = await elem.evaluate('el => el.tagName.toLowerCase()')
+                        text = await elem.text_content()
+                        print(f"   📍 Element {i}: <{tag}> '{text[:50]}...' - visible")
+                        
+                        # Klik elemen pertama yang visible
+                        await elem.click()
+                        await self.page.wait_for_timeout(3000)
+                        print(f"   ✅ Klik Sign up (fallback element {i})")
+                        return True
+                except:
+                    continue
+        except Exception as e:
+            print(f"   ❌ Fallback error: {e}")
+        
+        # Terakhir: coba navigasi langsung ke register URL
+        print("   🔍 Fallback: navigasi langsung ke register...")
+        try:
+            # Ambil URL dari halaman login dan modifikasi ke register
+            current_url = self.page.url
+            if 'login' in current_url:
+                register_url = current_url.replace('/login/password', '/register')
+                await self.page.goto(register_url)
+                await self.page.wait_for_timeout(3000)
+                print(f"   ✅ Navigasi langsung ke register")
+                return True
+        except Exception as e:
+            print(f"   ❌ Navigasi error: {e}")
         
         return False
     
