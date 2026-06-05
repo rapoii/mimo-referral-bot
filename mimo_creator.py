@@ -5,7 +5,7 @@ MiMo Referral Bot - Automated Account Creator
 Buat akun MiMo otomatis + apply referral + create API key
 
 Author: Rafi Permana
-GitHub: https://github.com/rfpermana/mimo-referral-bot
+GitHub: https://github.com/rapoii/mimo-referral-bot
 """
 
 import asyncio
@@ -41,37 +41,30 @@ DEFAULT_CONFIG = {
 
 
 def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
-    """Load config from file or use defaults"""
     config = DEFAULT_CONFIG.copy()
-    
     if config_path and Path(config_path).exists():
         with open(config_path, 'r') as f:
             user_config = json.load(f)
             config.update(user_config)
-    
     return config
 
 
 def random_username(length: int = 6) -> str:
-    """Generate random username untuk temp email"""
     chars = string.ascii_lowercase + string.digits
     return ''.join(random.choices(chars, k=length))
 
 
 def extract_verification_code(text: str) -> Optional[str]:
-    """Extract 6-digit verification code dari email body"""
     patterns = [
         r'verification code is (\d{6})',
         r'verification code:\s*(\d{6})',
-        r'code is:\s*(\d{6})',
+        r'your verification code is:\s*(\d{6})',
         r'\b(\d{6})\b'
     ]
-    
     for pattern in patterns:
         match = re.search(pattern, text, re.IGNORECASE)
         if match:
             return match.group(1)
-    
     return None
 
 
@@ -79,8 +72,6 @@ def extract_verification_code(text: str) -> Optional[str]:
 # MiMo Creator Class
 # ============================================
 class MiMoCreator:
-    """Automated MiMo account creator"""
-    
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.referral = config['referral_code']
@@ -91,45 +82,270 @@ class MiMoCreator:
         self.results: Dict[str, Any] = {}
         self.page: Optional[Page] = None
         self.context: Optional[BrowserContext] = None
-    
+
     async def create_account(self, playwright) -> Dict[str, Any]:
-        """Main workflow: buat akun + referral + API key"""
         self._print_header()
         
         browser = await playwright.chromium.launch(
-            headless=self.config['headless']
+            headless=self.config['headless'],
+            slow_mo=500  # Slow down untuk visibility
         )
         self.context = await browser.new_context()
         self.page = await self.context.new_page()
         
         try:
-            steps = [
-                self._step_open_temp_email,
-                self._step_open_mimo_signup,
-                self._step_click_signup,
-                self._step_fill_form,
-                self._step_solve_recaptcha,
-                self._step_get_verification_code,
-                self._step_enter_verification,
-                self._step_accept_terms,
-                self._step_enter_referral,
-                self._step_create_api_key,
-            ]
+            # STEP 1: Buka temp email & ambil email address
+            print("\n📧 [1/8] Membuka temp email...")
+            await self.page.goto(f"https://generator.email/{self.domain}/{self.username}")
+            await self.page.wait_for_timeout(2000)
+            print(f"   ✅ Email: {self.email}")
             
-            for i, step in enumerate(steps, 1):
-                print(f"\n{'='*50}")
-                print(f"📍 Step {i}/{len(steps)}: {step.__doc__}")
-                print(f"{'='*50}")
+            # STEP 2: Buka halaman Xiaomi signup
+            print("\n🌐 [2/8] Membuka Xiaomi signup...")
+            await self.page.goto("https://account.xiaomi.com/pass/register?_locale=en_US")
+            await self.page.wait_for_timeout(3000)
+            
+            # STEP 3: Isi form registrasi
+            print("\n✍️  [3/8] Mengisi form registrasi...")
+            
+            # Email
+            email_input = self.page.locator('input[name="email"]')
+            await email_input.fill(self.email)
+            print(f"   📧 Email: {self.email}")
+            
+            # Password
+            pwd_input = self.page.locator('input[name="password"]')
+            await pwd_input.fill(self.password)
+            print(f"   🔑 Password diisi")
+            
+            # Confirm password
+            repwd_input = self.page.locator('input[name="repassword"]')
+            await repwd_input.fill(self.password)
+            print(f"   🔑 Confirm password diisi")
+            
+            # Agreement checkbox
+            checkbox = self.page.locator('input[type="checkbox"]').first
+            await checkbox.check()
+            print(f"   ☑️  Agreement dicentang")
+            
+            # STEP 4: Klik Next + handle reCAPTCHA
+            print("\n🔒 [4/8] Klik Next & handle reCAPTCHA...")
+            next_btn = self.page.locator('button:has-text("Next")')
+            await next_btn.click()
+            await self.page.wait_for_timeout(3000)
+            
+            # Cek reCAPTCHA (muncul SETELAH klik Next)
+            print("   🔍 Mencari reCAPTCHA...")
+            recaptcha = self.page.locator('iframe[src*="recaptcha"], iframe[title*="reCAPTCHA"], .g-recaptcha')
+            count = await recaptcha.count()
+            print(f"   📊 reCAPTCHA elements: {count}")
+            
+            if count > 0:
+                # reCAPTCHA ditemukan - coba auto-solve
+                frame = recaptcha.first
+                content_frame = await frame.content_frame()
+                if content_frame:
+                    checkbox_el = content_frame.locator('#recaptcha-anchor')
+                    if await checkbox_el.count() > 0:
+                        print("   ☑️  Klik reCAPTCHA checkbox...")
+                        await checkbox_el.click()
+                        await self.page.wait_for_timeout(5000)
+                        
+                        # Cek apakah solved
+                        for i in range(30):
+                            try:
+                                checked = await checkbox_el.get_attribute('aria-checked')
+                                if checked == 'true':
+                                    print("   ✅ reCAPTCHA auto-solved!")
+                                    break
+                                
+                                # Cek challenge
+                                challenge = content_frame.locator('.rc-imageselect-challenge')
+                                if await challenge.count() > 0:
+                                    print("")
+                                    print("   " + "="*50)
+                                    print("   ⚠️  IMAGE CHALLENGE TERDETEKSI!")
+                                    print("   ⚠️  Silakan solve MANUAL di browser!")
+                                    print("   ⏳ Menunggu 120 detik...")
+                                    print("   " + "="*50)
+                                    print("")
+                                    await self.page.wait_for_timeout(120000)
+                                    break
+                                
+                                await self.page.wait_for_timeout(1000)
+                            except:
+                                await self.page.wait_for_timeout(1000)
+            else:
+                # Tidak ada reCAPTCHA iframe - mungkin ada challenge popup
+                # Atau reCAPTCHA belum load - tunggu lebih lama
+                await self.page.wait_for_timeout(5000)
                 
-                success = await step()
+                # Cek apakah sudah redirect ke verify
+                current_url = self.page.url
+                if 'verify' not in current_url and 'code' not in current_url:
+                    print("")
+                    print("   " + "="*50)
+                    print("   ⚠️  reCAPTCHA MUNGKIN MUNCUL SEBAGAI POPUP")
+                    print("   ⚠️  Silakan solve MANUAL di browser!")
+                    print("   ⏳ Menunggu 120 detik untuk solve...")
+                    print("   " + "="*50)
+                    print("")
+                    # Tunggu user solve manual
+                    await self.page.wait_for_timeout(120000)
+            
+            # Cek apakah sudah redirect ke verify
+            await self.page.wait_for_timeout(3000)
+            current_url = self.page.url
+            print(f"   📍 URL setelah reCAPTCHA: {current_url[:80]}...")
+            
+            if 'verify' not in current_url and 'code' not in current_url:
+                # Mungkin perlu klik Next lagi setelah reCAPTCHA
+                next_btn = self.page.locator('button:has-text("Next")')
+                if await next_btn.count() > 0:
+                    await next_btn.click()
+                    await self.page.wait_for_timeout(5000)
+                    current_url = self.page.url
+                    print(f"   📍 URL setelah klik ulang Next: {current_url[:80]}...")
+            
+            # STEP 5: Ambil kode verifikasi dari email
+            print("\n📬 [5/8] Mengambil kode verifikasi...")
+            email_page = await self.context.new_page()
+            await email_page.goto(f"https://generator.email/{self.domain}/{self.username}")
+            await email_page.wait_for_timeout(5000)
+            
+            # Refresh untuk memastikan email masuk
+            refresh_btn = email_page.locator('text=Refresh, button:has-text("Refresh")')
+            if await refresh_btn.count() > 0:
+                await refresh_btn.first.click()
+                await email_page.wait_for_timeout(3000)
+            
+            content = await email_page.content()
+            code = extract_verification_code(content)
+            
+            if not code:
+                await email_page.reload()
+                await email_page.wait_for_timeout(5000)
+                content = await email_page.content()
+                code = extract_verification_code(content)
+            
+            await email_page.close()
+            
+            if not code:
+                print("   ❌ Gagal mendapatkan kode verifikasi!")
+                raise Exception("Kode verifikasi tidak ditemukan")
+            
+            print(f"   ✅ Kode: {code}")
+            self.results['verification_code'] = code
+            
+            # STEP 6: Masukin kode verifikasi
+            print("\n🔢 [6/8] Memasukkan kode verifikasi...")
+            code_input = self.page.locator('input[placeholder*="code"], input[name*="code"]')
+            if await code_input.count() > 0:
+                await code_input.first.fill(code)
+            else:
+                # OTP style
+                for i, digit in enumerate(code):
+                    otp = self.page.locator(f'input[aria-label*="{i+1}"]')
+                    if await otp.count() > 0:
+                        await otp.first.fill(digit)
+                        await self.page.wait_for_timeout(100)
+            
+            submit_btn = self.page.locator('button:has-text("Submit")')
+            if await submit_btn.count() > 0:
+                await submit_btn.click()
+                await self.page.wait_for_timeout(5000)
+            
+            print(f"   ✅ Kode {code} dimasukkan")
+            
+            # STEP 7: Accept Terms & masukin referral
+            print("\n📋 [7/8] Accept Terms & referral...")
+            await self.page.wait_for_timeout(3000)
+            
+            # Accept terms popup
+            terms_checkbox = self.page.locator('input[type="checkbox"]').first
+            if await terms_checkbox.count() > 0:
+                await terms_checkbox.check()
+                await self.page.wait_for_timeout(500)
+            
+            confirm_btn = self.page.locator('button:has-text("Confirm")')
+            if await confirm_btn.count() > 0:
+                await confirm_btn.click()
+                await self.page.wait_for_timeout(2000)
+            
+            # Masukin referral code
+            await self.page.goto("https://platform.xiaomimimo.com/console/balance")
+            await self.page.wait_for_timeout(5000)
+            
+            invite_btn = self.page.locator('button:has-text("Enter invite code"), text=Enter invite code, button:has-text("Bind Code"), text=Bind Code')
+            if await invite_btn.count() > 0:
+                await invite_btn.first.click()
+                await self.page.wait_for_timeout(3000)
                 
-                if not success:
-                    raise Exception(f"Gagal di step {i}: {step.__doc__}")
-                
-                print(f"✅ Step {i} berhasil!")
+                # Isi kode
+                otp_inputs = self.page.locator('input[type="text"], input[role="textbox"]')
+                count = await otp_inputs.count()
+                if count >= 6:
+                    for i, char in enumerate(self.referral[:6]):
+                        await otp_inputs.nth(i).fill(char)
+                        await self.page.wait_for_timeout(100)
+                    
+                    # Redeem
+                    redeem_btn = self.page.locator('button:has-text("Redeem"), text=Redeem')
+                    if await redeem_btn.count() > 0:
+                        await redeem_btn.first.click()
+                        await self.page.wait_for_timeout(3000)
+                    
+                    print(f"   ✅ Referral {self.referral} applied!")
+                else:
+                    print(f"   ⚠️  Input OTP kurang ({count} dari 6)")
+            else:
+                print("   ⚠️  Tombol invite code tidak ditemukan")
             
             # Ambil balance
-            await self._get_balance()
+            balance_text = "unknown"
+            try:
+                balance_el = self.page.locator('text=/\\$ [\\d.]+/')
+                if await balance_el.count() > 0:
+                    balance_text = (await balance_el.first.text_content()).replace('$', '').strip()
+            except:
+                pass
+            self.results['balance'] = balance_text
+            
+            # STEP 8: Buat API Key
+            print("\n🔑 [8/8] Membuat API Key...")
+            await self.page.goto("https://platform.xiaomimimo.com/console/api-keys")
+            await self.page.wait_for_timeout(5000)
+            
+            create_btn = self.page.locator('button:has-text("Create API Key"), text=Create API Key')
+            if await create_btn.count() > 0:
+                await create_btn.first.click()
+                await self.page.wait_for_timeout(3000)
+                
+                # Isi nama
+                name_input = self.page.locator('input[placeholder*="enter"], input[placeholder*="name"]')
+                if await name_input.count() > 0:
+                    api_name = f"mimo-{self.username}"
+                    await name_input.first.fill(api_name)
+                
+                # Confirm
+                confirm_btn = self.page.locator('button:has-text("Confirm")')
+                if await confirm_btn.count() > 0:
+                    await confirm_btn.click()
+                    await self.page.wait_for_timeout(3000)
+                
+                # Ambil API key
+                api_input = self.page.locator('input[disabled], input[readonly]')
+                if await api_input.count() > 0:
+                    api_key = await api_input.first.input_value()
+                    if api_key and len(api_key) > 10:
+                        self.results['api_key'] = api_key
+                        print(f"   ✅ API Key: {api_key[:30]}...")
+                    else:
+                        print("   ⚠️  API key kosong")
+                else:
+                    print("   ⚠️  API key input tidak ditemukan")
+            else:
+                print("   ⚠️  Tombol Create API Key tidak ditemukan")
             
             # Simpan hasil
             self.results.update({
@@ -156,588 +372,16 @@ class MiMoCreator:
             
         finally:
             await browser.close()
-    
-    async def _step_open_temp_email(self) -> bool:
-        """Membuka temp email"""
-        url = f"https://generator.email/{self.domain}/{self.username}"
-        await self.page.goto(url)
-        await self.page.wait_for_timeout(2000)
-        print(f"   📧 Email: {self.email}")
-        return True
-    
-    async def _step_open_mimo_signup(self) -> bool:
-        """Membuka MiMo signup"""
-        url = f"https://platform.xiaomimimo.com/?ref={self.referral}"
-        await self.page.goto(url)
-        await self.page.wait_for_timeout(3000)
-        
-        # Cari tombol Apply for API Key
-        apply_btn = self.page.locator('a:has-text("Apply for API Key")')
-        if await apply_btn.count() > 0:
-            await apply_btn.click()
-            await self.page.wait_for_timeout(3000)
-        
-        return True
-    
-    async def _step_click_signup(self) -> bool:
-        """Klik tombol Sign up"""
-        print("   🔍 Mencari tombol Sign up...")
-        
-        # Tunggu halaman login selesai dimuat
-        await self.page.wait_for_timeout(2000)
-        
-        # Coba beberapa selector (prioritas: text langsung dulu)
-        selectors = [
-            'text=Sign up',
-            'button:has-text("Sign up")',
-            'a:has-text("Sign up")',
-            '[data-testid="sign-up"]',
-            'div:has-text("Sign up")',
-            'span:has-text("Sign up")',
-        ]
-        
-        for selector in selectors:
-            try:
-                elem = self.page.locator(selector).first
-                count = await elem.count()
-                if count > 0:
-                    # Pastikan elemen visible
-                    is_visible = await elem.is_visible()
-                    if is_visible:
-                        await elem.click()
-                        await self.page.wait_for_timeout(3000)
-                        print(f"   ✅ Klik Sign up (selector: {selector})")
-                        return True
-                    else:
-                        print(f"   ⚠️  {selector} ditemukan tapi tidak visible")
-            except Exception as e:
-                print(f"   ⚠️  {selector} error: {e}")
-                continue
-        
-        # Fallback: cari semua elemen yang mengandung "Sign up"
-        print("   🔍 Fallback: mencari elemen dengan text 'Sign up'...")
-        try:
-            all_elements = self.page.locator('*:has-text("Sign up")')
-            count = await all_elements.count()
-            print(f"   📊 Ditemukan {count} elemen dengan 'Sign up'")
-            
-            for i in range(count):
-                elem = all_elements.nth(i)
-                try:
-                    is_visible = await elem.is_visible()
-                    if is_visible:
-                        tag = await elem.evaluate('el => el.tagName.toLowerCase()')
-                        text = await elem.text_content()
-                        print(f"   📍 Element {i}: <{tag}> '{text[:50]}...' - visible")
-                        
-                        # Klik elemen pertama yang visible
-                        await elem.click()
-                        await self.page.wait_for_timeout(3000)
-                        print(f"   ✅ Klik Sign up (fallback element {i})")
-                        return True
-                except:
-                    continue
-        except Exception as e:
-            print(f"   ❌ Fallback error: {e}")
-        
-        # Terakhir: coba navigasi langsung ke register URL
-        print("   🔍 Fallback: navigasi langsung ke register...")
-        try:
-            # Ambil URL dari halaman login dan modifikasi ke register
-            current_url = self.page.url
-            if 'login' in current_url:
-                register_url = current_url.replace('/login/password', '/register')
-                await self.page.goto(register_url)
-                await self.page.wait_for_timeout(3000)
-                print(f"   ✅ Navigasi langsung ke register")
-                return True
-        except Exception as e:
-            print(f"   ❌ Navigasi error: {e}")
-        
-        return False
-    
-    async def _step_fill_form(self) -> bool:
-        """Mengisi form registrasi"""
-        # Email - coba beberapa selector
-        email_selectors = [
-            'input[name="email"]',
-            'input[type="email"]',
-            'input[placeholder*="Email"]',
-            'input[placeholder*="email"]',
-        ]
-        
-        email_filled = False
-        for selector in email_selectors:
-            try:
-                email_input = self.page.locator(selector).first
-                if await email_input.count() > 0:
-                    await email_input.fill(self.email)
-                    await self.page.wait_for_timeout(500)
-                    email_filled = True
-                    print(f"   ✍️  Email: {self.email} (selector: {selector})")
-                    break
-            except:
-                continue
-        
-        if not email_filled:
-            # Fallback: cari input pertama setelah Sign up
-            all_inputs = self.page.locator('input[type="text"], input:not([type])')
-            count = await all_inputs.count()
-            if count > 0:
-                await all_inputs.first.fill(self.email)
-                email_filled = True
-                print(f"   ✍️  Email: {self.email} (fallback)")
-        
-        # Password
-        pwd_selectors = [
-            'input[name="password"]',
-            'input[type="password"]',
-        ]
-        
-        for selector in pwd_selectors:
-            try:
-                pwd_input = self.page.locator(selector).first
-                if await pwd_input.count() > 0:
-                    await pwd_input.fill(self.password)
-                    await self.page.wait_for_timeout(500)
-                    print(f"   🔑 Password diisi")
-                    break
-            except:
-                continue
-        
-        # Confirm password
-        repwd_selectors = [
-            'input[name="repassword"]',
-            'input[type="password"]',
-        ]
-        
-        pwd_inputs = self.page.locator('input[type="password"]')
-        pwd_count = await pwd_inputs.count()
-        if pwd_count >= 2:
-            await pwd_inputs.last.fill(self.password)
-            await self.page.wait_for_timeout(500)
-            print(f"   🔑 Confirm password diisi")
-        
-        # Agreement checkbox
-        checkbox = self.page.locator('input[type="checkbox"]').first
-        if await checkbox.count() > 0:
-            is_checked = await checkbox.is_checked()
-            if not is_checked:
-                await checkbox.check()
-                await self.page.wait_for_timeout(500)
-                print(f"   ☑️  Agreement dicentang")
-        
-        return email_filled
-    
-    async def _step_solve_recaptcha(self) -> bool:
-        """Menyelesaikan reCAPTCHA"""
-        print("   🔍 Mencari reCAPTCHA...")
-        
-        # Tunggu sebentar untuk reCAPTCHA muncul
-        await self.page.wait_for_timeout(3000)
-        
-        # Cari reCAPTCHA iframe
-        recaptcha_frames = self.page.locator('iframe[src*="recaptcha"], iframe[title*="reCAPTCHA"]')
-        frame_count = await recaptcha_frames.count()
-        print(f"   📊 Ditemukan {frame_count} reCAPTCHA iframe")
-        
-        if frame_count > 0:
-            # Masuk ke dalam iframe reCAPTCHA
-            frame = recaptcha_frames.first
-            content_frame = await frame.content_frame()
-            
-            if content_frame:
-                # Cari checkbox di dalam iframe
-                checkbox = content_frame.locator('#recaptcha-anchor, [role="checkbox"]')
-                if await checkbox.count() > 0:
-                    print("   ☑️  Klik reCAPTCHA checkbox...")
-                    await checkbox.click()
-                    await self.page.wait_for_timeout(5000)
-                    
-                    # Tunggu sampai checkbox tercentang (reCAPTCHA solved)
-                    max_wait = 60  # Tunggu maksimal 60 detik
-                    for i in range(max_wait):
-                        try:
-                            is_checked = await checkbox.get_attribute('aria-checked')
-                            if is_checked == 'true':
-                                print("   ✅ reCAPTCHA solved!")
-                                break
-                            
-                            # Cek apakah ada challenge (image challenge)
-                            challenge = content_frame.locator('.rc-imageselect-challenge, .challenge')
-                            if await challenge.count() > 0:
-                                print("   ⚠️  reCAPTCHA challenge muncul (image challenge)")
-                                print("   ⚠️  Script tidak bisa solve image challenge otomatis")
-                                print("   ⚠️  Silakan solve manual di browser yang terbuka")
-                                print("   ⏳ Menunggu 60 detik untuk solve manual...")
-                                # Tunggu user solve manual
-                                await self.page.wait_for_timeout(60000)
-                                break
-                            
-                            # Progress indicator
-                            if i % 10 == 0:
-                                print(f"   ⏳ Menunggu reCAPTCHA... ({i}/{max_wait}s)")
-                            
-                            await self.page.wait_for_timeout(1000)
-                        except Exception as e:
-                            print(f"   ⚠️  Error checking reCAPTCHA: {e}")
-                            await self.page.wait_for_timeout(1000)
-                else:
-                    print("   ⚠️  Checkbox reCAPTCHA tidak ditemukan di iframe")
-            else:
-                print("   ⚠️  Tidak bisa masuk ke iframe reCAPTCHA")
-        else:
-            print("   ℹ️  Tidak ada reCAPTCHA ditemukan")
-        
-        # Klik tombol Next/Submit setelah reCAPTCHA
-        print("   🔍 Mencari tombol Next/Submit...")
-        next_selectors = [
-            'button:has-text("Next")',
-            'button:has-text("Submit")',
-            'button:has-text("Register")',
-            'button[type="submit"]',
-        ]
-        
-        for selector in next_selectors:
-            try:
-                next_btn = self.page.locator(selector).first
-                if await next_btn.count() > 0:
-                    is_visible = await next_btn.is_visible()
-                    is_enabled = await next_btn.is_enabled()
-                    if is_visible and is_enabled:
-                        await next_btn.click()
-                        print(f"   🤖 Klik {selector}")
-                        await self.page.wait_for_timeout(5000)
-                        break
-                    else:
-                        print(f"   ⚠️  {selector} visible={is_visible}, enabled={is_enabled}")
-            except Exception as e:
-                print(f"   ⚠️  {selector} error: {e}")
-                continue
-        
-        # Tunggu sampai halaman berubah (redirect ke verifikasi email)
-        print("   ⏳ Menunggu redirect ke verifikasi email...")
-        for i in range(60):  # Tunggu maksimal 60 detik
-            current_url = self.page.url
-            if 'verify' in current_url or 'code' in current_url:
-                print(f"   ✅ Redirect ke verifikasi email!")
-                return True
-            
-            # Cek apakah ada input kode verifikasi
-            code_input = self.page.locator('input[placeholder*="code"], input[name*="code"], input[placeholder*="Code"]')
-            if await code_input.count() > 0:
-                print("   ✅ Input kode verifikasi ditemukan!")
-                return True
-            
-            # Progress indicator
-            if i % 10 == 0:
-                print(f"   ⏳ Menunggu redirect... ({i}/60s)")
-            
-            await self.page.wait_for_timeout(1000)
-        
-        print("   ⚠️  Tidak redirect ke verifikasi email setelah 60 detik")
-        print(f"   📍 URL saat ini: {self.page.url}")
-        return False  # GAGAL - tidak redirect
-    
-    async def _step_get_verification_code(self) -> bool:
-        """Mengambil kode verifikasi dari email"""
-        print("   ⏳ Menunggu email verifikasi...")
-        await self.page.wait_for_timeout(3000)
-        
-        # Buka tab baru untuk cek email
-        email_page = await self.context.new_page()
-        url = f"https://generator.email/{self.domain}/{self.username}"
-        await email_page.goto(url)
-        await email_page.wait_for_timeout(5000)
-        
-        # Cari kode
-        content = await email_page.content()
-        code = extract_verification_code(content)
-        
-        if not code:
-            # Coba refresh
-            await email_page.reload()
-            await email_page.wait_for_timeout(5000)
-            content = await email_page.content()
-            code = extract_verification_code(content)
-        
-        await email_page.close()
-        
-        if code:
-            print(f"   📬 Kode verifikasi: {code}")
-            self.results['verification_code'] = code
-            return True
-        
-        return False
-    
-    async def _step_enter_verification(self) -> bool:
-        """Memasukkan kode verifikasi"""
-        code = self.results.get('verification_code')
-        if not code:
-            return False
-        
-        # Cari input kode
-        code_input = self.page.locator('input[placeholder*="code"], input[name*="code"]')
-        if await code_input.count() > 0:
-            await code_input.first.fill(code)
-        else:
-            # OTP-style inputs
-            for i, digit in enumerate(code):
-                otp = self.page.locator(f'input[aria-label*="{i+1}"]')
-                if await otp.count() > 0:
-                    await otp.first.fill(digit)
-                    await self.page.wait_for_timeout(100)
-        
-        # Submit
-        submit_btn = self.page.locator('button:has-text("Submit"), button:has-text("Verify")')
-        if await submit_btn.count() > 0:
-            await submit_btn.click()
-            await self.page.wait_for_timeout(5000)
-        
-        print(f"   🔢 Kode {code} dimasukkan")
-        return True
-    
-    async def _step_accept_terms(self) -> bool:
-        """Accept Terms & Agreements"""
-        await self.page.wait_for_timeout(3000)
-        
-        # Checkbox
-        checkbox = self.page.locator('input[type="checkbox"]').first
-        if await checkbox.count() > 0:
-            await checkbox.check()
-            await self.page.wait_for_timeout(500)
-        
-        # Confirm
-        confirm_btn = self.page.locator('button:has-text("Confirm")')
-        if await confirm_btn.count() > 0:
-            await confirm_btn.click()
-            await self.page.wait_for_timeout(2000)
-        
-        print("   📋 Terms accepted")
-        return True
-    
-    async def _step_enter_referral(self) -> bool:
-        """Memasukkan kode referral"""
-        await self.page.goto("https://platform.xiaomimimo.com/console/balance")
-        await self.page.wait_for_timeout(5000)
-        
-        # Cari tombol Enter invite code
-        invite_selectors = [
-            'button:has-text("Enter invite code")',
-            'text=Enter invite code',
-            'button:has-text("invite code")',
-            'text=invite code',
-            'button:has-text("Bind Code")',
-            'text=Bind Code',
-        ]
-        
-        for selector in invite_selectors:
-            try:
-                invite_btn = self.page.locator(selector).first
-                if await invite_btn.count() > 0:
-                    is_visible = await invite_btn.is_visible()
-                    if is_visible:
-                        await invite_btn.click()
-                        await self.page.wait_for_timeout(3000)
-                        print(f"   🎁 Klik {selector}")
-                        
-                        # Isi kode (6 karakter)
-                        otp_selectors = [
-                            'input[type="text"]',
-                            'input[role="textbox"]',
-                            'input[aria-label*="1"]',
-                        ]
-                        
-                        for otp_selector in otp_selectors:
-                            otp_inputs = self.page.locator(otp_selector)
-                            count = await otp_inputs.count()
-                            if count >= 6:
-                                for i, char in enumerate(self.referral[:6]):
-                                    await otp_inputs.nth(i).fill(char)
-                                    await self.page.wait_for_timeout(100)
-                                print(f"   🔢 Kode referral diisi: {self.referral}")
-                                break
-                        
-                        # Klik Redeem
-                        redeem_selectors = [
-                            'button:has-text("Redeem")',
-                            'text=Redeem',
-                            'button:has-text("get $2")',
-                        ]
-                        
-                        for redeem_selector in redeem_selectors:
-                            redeem_btn = self.page.locator(redeem_selector).first
-                            if await redeem_btn.count() > 0:
-                                await redeem_btn.click()
-                                await self.page.wait_for_timeout(3000)
-                                print(f"   ✅ Klik {redeem_selector}")
-                                break
-                        
-                        print(f"   🎁 Referral {self.referral} applied!")
-                        return True
-            except Exception as e:
-                print(f"   ⚠️  {selector} error: {e}")
-                continue
-        
-        # Fallback: coba cari dialog yang mungkin sudah terbuka
-        print("   🔍 Fallback: mencari dialog referral...")
-        try:
-            dialog = self.page.locator('dialog, [role="dialog"], .modal')
-            if await dialog.count() > 0:
-                print("   📋 Dialog ditemukan, mencari input...")
-                # Cari input di dalam dialog
-                inputs = dialog.locator('input[type="text"], input[role="textbox"]')
-                count = await inputs.count()
-                if count >= 6:
-                    for i, char in enumerate(self.referral[:6]):
-                        await inputs.nth(i).fill(char)
-                        await self.page.wait_for_timeout(100)
-                    print(f"   🔢 Kode referral diisi (dialog)")
-                    
-                    # Cari tombol redeem di dialog
-                    redeem = dialog.locator('button:has-text("Redeem"), text=Redeem')
-                    if await redeem.count() > 0:
-                        await redeem.first.click()
-                        await self.page.wait_for_timeout(3000)
-                        print("   ✅ Referral applied (dialog)")
-                        return True
-        except Exception as e:
-            print(f"   ❌ Dialog fallback error: {e}")
-        
-        print("   ⚠️  Tombol invite code tidak ditemukan")
-        return True  # Lanjutkan meski gagal
-    
-    async def _step_create_api_key(self) -> bool:
-        """Membuat API Key"""
-        await self.page.goto("https://platform.xiaomimimo.com/console/api-keys")
-        await self.page.wait_for_timeout(5000)
-        
-        # Cari tombol Create API Key
-        create_selectors = [
-            'button:has-text("Create API Key")',
-            'text=Create API Key',
-            'button:has-text("create")',
-        ]
-        
-        for selector in create_selectors:
-            try:
-                create_btn = self.page.locator(selector).first
-                if await create_btn.count() > 0:
-                    is_visible = await create_btn.is_visible()
-                    if is_visible:
-                        await create_btn.click()
-                        await self.page.wait_for_timeout(3000)
-                        print(f"   🔑 Klik {selector}")
-                        
-                        # Isi nama API key
-                        name_selectors = [
-                            'input[placeholder*="enter"]',
-                            'input[placeholder*="name"]',
-                            'input[type="text"]',
-                        ]
-                        
-                        for name_selector in name_selectors:
-                            name_input = self.page.locator(name_selector).first
-                            if await name_input.count() > 0:
-                                api_name = f"mimo-{self.username}"
-                                await name_input.fill(api_name)
-                                print(f"   📝 Nama: {api_name}")
-                                break
-                        
-                        # Klik Confirm
-                        confirm_selectors = [
-                            'button:has-text("Confirm")',
-                            'text=Confirm',
-                            'button[type="submit"]',
-                        ]
-                        
-                        for confirm_selector in confirm_selectors:
-                            confirm_btn = self.page.locator(confirm_selector).first
-                            if await confirm_btn.count() > 0:
-                                await confirm_btn.click()
-                                await self.page.wait_for_timeout(3000)
-                                print(f"   ✅ Klik {confirm_selector}")
-                                break
-                        
-                        # Ambil API key dari dialog atau tabel
-                        api_selectors = [
-                            'input[disabled]',
-                            'input[readonly]',
-                            '[data-testid="api-key"]',
-                            '.api-key-value',
-                        ]
-                        
-                        for api_selector in api_selectors:
-                            api_input = self.page.locator(api_selector).first
-                            if await api_input.count() > 0:
-                                api_key = await api_input.input_value()
-                                if api_key and len(api_key) > 10:
-                                    self.results['api_key'] = api_key
-                                    print(f"   🔑 API Key: {api_key[:30]}...")
-                                    return True
-                        
-                        # Fallback: cari text yang mirip API key
-                        print("   🔍 Mencari API key di halaman...")
-                        all_text = await self.page.locator('text=/sk-[a-zA-Z0-9]+/').all_text_contents()
-                        if all_text:
-                            for text in all_text:
-                                if 'sk-' in text and len(text) > 20:
-                                    self.results['api_key'] = text.strip()
-                                    print(f"   🔑 API Key (text): {text[:30]}...")
-                                    return True
-                        
-                        print("   ⚠️  API key tidak ditemukan di halaman")
-                        return True  # Lanjutkan meski gagal
-            except Exception as e:
-                print(f"   ⚠️  {selector} error: {e}")
-                continue
-        
-        # Fallback: coba cari dialog yang mungkin sudah terbuka
-        print("   🔍 Fallback: mencari dialog API key...")
-        try:
-            dialog = self.page.locator('dialog, [role="dialog"], .modal')
-            if await dialog.count() > 0:
-                print("   📋 Dialog ditemukan")
-                # Cari input di dialog
-                inputs = dialog.locator('input')
-                count = await inputs.count()
-                if count > 0:
-                    for i in range(count):
-                        value = await inputs.nth(i).input_value()
-                        if value and 'sk-' in value:
-                            self.results['api_key'] = value
-                            print(f"   🔑 API Key (dialog): {value[:30]}...")
-                            return True
-        except Exception as e:
-            print(f"   ❌ Dialog fallback error: {e}")
-        
-        print("   ⚠️  Gagal membuat API key")
-        return True  # Lanjutkan meski gagal
-    
-    async def _get_balance(self) -> None:
-        """Ambil balance terbaru"""
-        await self.page.goto("https://platform.xiaomimimo.com/console/balance")
-        await self.page.wait_for_timeout(3000)
-        
-        try:
-            balance_elem = self.page.locator('text=/\\$ [\\d.]+/')
-            if await balance_elem.count() > 0:
-                balance_text = await balance_elem.first.text_content()
-                self.results['balance'] = balance_text.replace('$', '').strip()
-        except:
-            self.results['balance'] = 'unknown'
-    
+
     def _print_header(self) -> None:
-        """Print header"""
         print(f"\n{'='*50}")
         print(f"🚀 MEMULAI PEMBUATAN AKUN MiMo")
         print(f"{'='*50}")
         print(f"📧 Email: {self.email}")
         print(f"🔗 Referral: {self.referral}")
         print(f"{'='*50}")
-    
+
     def _print_success(self) -> None:
-        """Print success message"""
         print(f"\n{'='*50}")
         print(f"✅ AKUN BERHASIL DIBUAT!")
         print(f"{'='*50}")
@@ -746,7 +390,7 @@ class MiMoCreator:
         print(f"💰 Balance:  ${self.results.get('balance', 'unknown')}")
         print(f"🔗 Referral: {self.referral} (applied)")
         if 'api_key' in self.results:
-            print(f"🔑 API Key:  {self.results['api_key'][:30]}...")
+            print(f"🔑 API Key:  {self.results['api_key'][:40]}...")
         print(f"{'='*50}\n")
 
 
@@ -754,11 +398,8 @@ class MiMoCreator:
 # Report Generator
 # ============================================
 class ReportGenerator:
-    """Generate laporan akun"""
-    
     @staticmethod
     def save_report(results_list: List[Dict], output_dir: str) -> Path:
-        """Simpan laporan ke file"""
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
         
@@ -796,69 +437,35 @@ class ReportGenerator:
 
 
 # ============================================
-# Main Entry Point
+# Main
 # ============================================
 async def main():
-    """Main entry point"""
     parser = argparse.ArgumentParser(
         description='MiMo Referral Bot - Automated Account Creator',
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Contoh penggunaan:
-  python mimo_creator.py
-  python mimo_creator.py --referral CJZ295
-  python mimo_creator.py --referral CJZ295 --count 5
-  python mimo_creator.py --config config.json
-        """
     )
-    
-    parser.add_argument(
-        '--referral', '-r',
-        default=DEFAULT_CONFIG['referral_code'],
-        help=f'Kode referral (default: {DEFAULT_CONFIG["referral_code"]})'
-    )
-    parser.add_argument(
-        '--count', '-c',
-        type=int,
-        default=1,
-        help='Jumlah akun yang akan dibuat (default: 1)'
-    )
-    parser.add_argument(
-        '--password', '-p',
-        default=DEFAULT_CONFIG['password'],
-        help=f'Password untuk akun (default: {DEFAULT_CONFIG["password"]})'
-    )
-    parser.add_argument(
-        '--config',
-        help='Path ke file config.json'
-    )
-    parser.add_argument(
-        '--headless',
-        action='store_true',
-        help='Jalankan dalam mode headless (tanpa browser window)'
-    )
+    parser.add_argument('--referral', '-r', default=DEFAULT_CONFIG['referral_code'])
+    parser.add_argument('--count', '-c', type=int, default=1)
+    parser.add_argument('--password', '-p', default=DEFAULT_CONFIG['password'])
+    parser.add_argument('--config', help='Path ke file config.json')
+    parser.add_argument('--headless', action='store_true')
     
     args = parser.parse_args()
     
-    # Load config
     config = load_config(args.config)
     config['referral_code'] = args.referral
     config['password'] = args.password
     config['headless'] = args.headless
     
-    # Print banner
     print("""
 ╔══════════════════════════════════════════════╗
 ║        🤖 MiMo Referral Bot v1.0            ║
 ║        Automated Account Creator             ║
 ╚══════════════════════════════════════════════╝
     """)
-    
-    print(f"📋 Konfigurasi:")
-    print(f"   Referral: {config['referral_code']}")
-    print(f"   Jumlah:   {args.count} akun")
-    print(f"   Password: {config['password']}")
-    print(f"   Headless: {config['headless']}")
+    print(f"📋 Referral: {config['referral_code']}")
+    print(f"📋 Jumlah:   {args.count} akun")
+    print(f"📋 Headless: {config['headless']}")
     print()
     
     results = []
@@ -866,41 +473,22 @@ Contoh penggunaan:
     async with async_playwright() as playwright:
         for i in range(args.count):
             print(f"\n🔄 Membuat akun {i+1}/{args.count}...")
-            
             creator = MiMoCreator(config)
             result = await creator.create_account(playwright)
-            
             if result:
                 results.append(result)
             
-            # Delay antar akun
             if i < args.count - 1:
-                delay_range = config['delay_between_accounts']
-                delay = random.randint(delay_range[0], delay_range[1])
-                print(f"⏳ Menunggu {delay} detik sebelum akun berikutnya...")
+                delay = random.randint(*config['delay_between_accounts'])
+                print(f"⏳ Menunggu {delay} detik...")
                 await asyncio.sleep(delay)
     
-    # Simpan laporan
     report_path = ReportGenerator.save_report(results, config['output_dir'])
     
-    # Print summary
     success = [r for r in results if r.get('status') == 'SUCCESS']
-    
     print(f"\n{'='*50}")
-    print(f"📊 RINGKASAN")
-    print(f"{'='*50}")
-    print(f"Total:    {len(results)} akun")
-    print(f"✅ Sukses: {len(success)}")
-    print(f"❌ Gagal:  {len(results) - len(success)}")
-    
-    if success:
-        print(f"\n📧 Akun yang berhasil:")
-        for r in success:
-            print(f"   • {r['email']} / {r['password']}")
-            if 'api_key' in r:
-                print(f"     🔑 {r['api_key'][:40]}...")
-    
-    print(f"\n📄 Laporan: {report_path}")
+    print(f"📊 RINGKASAN: {len(success)}/{len(results)} berhasil")
+    print(f"📄 Laporan: {report_path}")
     print(f"{'='*50}\n")
     
     return 0 if success else 1
