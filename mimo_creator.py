@@ -433,29 +433,90 @@ class MiMoCreator:
     async def _step_enter_referral(self) -> bool:
         """Memasukkan kode referral"""
         await self.page.goto("https://platform.xiaomimimo.com/console/balance")
-        await self.page.wait_for_timeout(3000)
+        await self.page.wait_for_timeout(5000)
         
-        # Klik Enter invite code
-        invite_btn = self.page.locator('button:has-text("Enter invite code")')
-        if await invite_btn.count() > 0:
-            await invite_btn.click()
-            await self.page.wait_for_timeout(2000)
-            
-            # Isi kode (6 karakter)
-            otp_inputs = self.page.locator('input[type="text"], input[role="textbox"]')
-            for i, char in enumerate(self.referral[:6]):
-                if i < await otp_inputs.count():
-                    await otp_inputs.nth(i).fill(char)
-                    await self.page.wait_for_timeout(100)
-            
-            # Redeem
-            redeem_btn = self.page.locator('button:has-text("Redeem")')
-            if await redeem_btn.count() > 0:
-                await redeem_btn.click()
-                await self.page.wait_for_timeout(3000)
-            
-            print(f"   🎁 Referral {self.referral} applied!")
-            return True
+        # Cari tombol Enter invite code
+        invite_selectors = [
+            'button:has-text("Enter invite code")',
+            'text=Enter invite code',
+            'button:has-text("invite code")',
+            'text=invite code',
+            'button:has-text("Bind Code")',
+            'text=Bind Code',
+        ]
+        
+        for selector in invite_selectors:
+            try:
+                invite_btn = self.page.locator(selector).first
+                if await invite_btn.count() > 0:
+                    is_visible = await invite_btn.is_visible()
+                    if is_visible:
+                        await invite_btn.click()
+                        await self.page.wait_for_timeout(3000)
+                        print(f"   🎁 Klik {selector}")
+                        
+                        # Isi kode (6 karakter)
+                        otp_selectors = [
+                            'input[type="text"]',
+                            'input[role="textbox"]',
+                            'input[aria-label*="1"]',
+                        ]
+                        
+                        for otp_selector in otp_selectors:
+                            otp_inputs = self.page.locator(otp_selector)
+                            count = await otp_inputs.count()
+                            if count >= 6:
+                                for i, char in enumerate(self.referral[:6]):
+                                    await otp_inputs.nth(i).fill(char)
+                                    await self.page.wait_for_timeout(100)
+                                print(f"   🔢 Kode referral diisi: {self.referral}")
+                                break
+                        
+                        # Klik Redeem
+                        redeem_selectors = [
+                            'button:has-text("Redeem")',
+                            'text=Redeem',
+                            'button:has-text("get $2")',
+                        ]
+                        
+                        for redeem_selector in redeem_selectors:
+                            redeem_btn = self.page.locator(redeem_selector).first
+                            if await redeem_btn.count() > 0:
+                                await redeem_btn.click()
+                                await self.page.wait_for_timeout(3000)
+                                print(f"   ✅ Klik {redeem_selector}")
+                                break
+                        
+                        print(f"   🎁 Referral {self.referral} applied!")
+                        return True
+            except Exception as e:
+                print(f"   ⚠️  {selector} error: {e}")
+                continue
+        
+        # Fallback: coba cari dialog yang mungkin sudah terbuka
+        print("   🔍 Fallback: mencari dialog referral...")
+        try:
+            dialog = self.page.locator('dialog, [role="dialog"], .modal')
+            if await dialog.count() > 0:
+                print("   📋 Dialog ditemukan, mencari input...")
+                # Cari input di dalam dialog
+                inputs = dialog.locator('input[type="text"], input[role="textbox"]')
+                count = await inputs.count()
+                if count >= 6:
+                    for i, char in enumerate(self.referral[:6]):
+                        await inputs.nth(i).fill(char)
+                        await self.page.wait_for_timeout(100)
+                    print(f"   🔢 Kode referral diisi (dialog)")
+                    
+                    # Cari tombol redeem di dialog
+                    redeem = dialog.locator('button:has-text("Redeem"), text=Redeem')
+                    if await redeem.count() > 0:
+                        await redeem.first.click()
+                        await self.page.wait_for_timeout(3000)
+                        print("   ✅ Referral applied (dialog)")
+                        return True
+        except Exception as e:
+            print(f"   ❌ Dialog fallback error: {e}")
         
         print("   ⚠️  Tombol invite code tidak ditemukan")
         return True  # Lanjutkan meski gagal
@@ -463,33 +524,106 @@ class MiMoCreator:
     async def _step_create_api_key(self) -> bool:
         """Membuat API Key"""
         await self.page.goto("https://platform.xiaomimimo.com/console/api-keys")
-        await self.page.wait_for_timeout(3000)
+        await self.page.wait_for_timeout(5000)
         
-        # Create API Key
-        create_btn = self.page.locator('button:has-text("Create API Key")')
-        if await create_btn.count() > 0:
-            await create_btn.click()
-            await self.page.wait_for_timeout(2000)
-            
-            # Isi nama
-            name_input = self.page.locator('input[placeholder*="enter"]')
-            if await name_input.count() > 0:
-                api_name = f"mimo-{self.username}"
-                await name_input.fill(api_name)
-            
-            # Confirm
-            confirm_btn = self.page.locator('button:has-text("Confirm")')
-            if await confirm_btn.count() > 0:
-                await confirm_btn.click()
-                await self.page.wait_for_timeout(3000)
-            
-            # Ambil API key
-            api_input = self.page.locator('input[disabled], input[readonly]')
-            if await api_input.count() > 0:
-                api_key = await api_input.first.input_value()
-                self.results['api_key'] = api_key
-                print(f"   🔑 API Key: {api_key[:30]}...")
-                return True
+        # Cari tombol Create API Key
+        create_selectors = [
+            'button:has-text("Create API Key")',
+            'text=Create API Key',
+            'button:has-text("create")',
+        ]
+        
+        for selector in create_selectors:
+            try:
+                create_btn = self.page.locator(selector).first
+                if await create_btn.count() > 0:
+                    is_visible = await create_btn.is_visible()
+                    if is_visible:
+                        await create_btn.click()
+                        await self.page.wait_for_timeout(3000)
+                        print(f"   🔑 Klik {selector}")
+                        
+                        # Isi nama API key
+                        name_selectors = [
+                            'input[placeholder*="enter"]',
+                            'input[placeholder*="name"]',
+                            'input[type="text"]',
+                        ]
+                        
+                        for name_selector in name_selectors:
+                            name_input = self.page.locator(name_selector).first
+                            if await name_input.count() > 0:
+                                api_name = f"mimo-{self.username}"
+                                await name_input.fill(api_name)
+                                print(f"   📝 Nama: {api_name}")
+                                break
+                        
+                        # Klik Confirm
+                        confirm_selectors = [
+                            'button:has-text("Confirm")',
+                            'text=Confirm',
+                            'button[type="submit"]',
+                        ]
+                        
+                        for confirm_selector in confirm_selectors:
+                            confirm_btn = self.page.locator(confirm_selector).first
+                            if await confirm_btn.count() > 0:
+                                await confirm_btn.click()
+                                await self.page.wait_for_timeout(3000)
+                                print(f"   ✅ Klik {confirm_selector}")
+                                break
+                        
+                        # Ambil API key dari dialog atau tabel
+                        api_selectors = [
+                            'input[disabled]',
+                            'input[readonly]',
+                            '[data-testid="api-key"]',
+                            '.api-key-value',
+                        ]
+                        
+                        for api_selector in api_selectors:
+                            api_input = self.page.locator(api_selector).first
+                            if await api_input.count() > 0:
+                                api_key = await api_input.input_value()
+                                if api_key and len(api_key) > 10:
+                                    self.results['api_key'] = api_key
+                                    print(f"   🔑 API Key: {api_key[:30]}...")
+                                    return True
+                        
+                        # Fallback: cari text yang mirip API key
+                        print("   🔍 Mencari API key di halaman...")
+                        all_text = await self.page.locator('text=/sk-[a-zA-Z0-9]+/').all_text_contents()
+                        if all_text:
+                            for text in all_text:
+                                if 'sk-' in text and len(text) > 20:
+                                    self.results['api_key'] = text.strip()
+                                    print(f"   🔑 API Key (text): {text[:30]}...")
+                                    return True
+                        
+                        print("   ⚠️  API key tidak ditemukan di halaman")
+                        return True  # Lanjutkan meski gagal
+            except Exception as e:
+                print(f"   ⚠️  {selector} error: {e}")
+                continue
+        
+        # Fallback: coba cari dialog yang mungkin sudah terbuka
+        print("   🔍 Fallback: mencari dialog API key...")
+        try:
+            dialog = self.page.locator('dialog, [role="dialog"], .modal')
+            if await dialog.count() > 0:
+                print("   📋 Dialog ditemukan")
+                # Cari input di dialog
+                inputs = dialog.locator('input')
+                count = await inputs.count()
+                if count > 0:
+                    for i in range(count):
+                        value = await inputs.nth(i).input_value()
+                        if value and 'sk-' in value:
+                            self.results['api_key'] = value
+                            print(f"   🔑 API Key (dialog): {value[:30]}...")
+                            return True
+        except Exception as e:
+            print(f"   ❌ Dialog fallback error: {e}")
         
         print("   ⚠️  Gagal membuat API key")
         return True  # Lanjutkan meski gagal
