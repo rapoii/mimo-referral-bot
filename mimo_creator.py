@@ -181,45 +181,128 @@ class MiMoCreator:
     
     async def _step_click_signup(self) -> bool:
         """Klik tombol Sign up"""
-        signup_btn = self.page.locator('button:has-text("Sign up")')
-        if await signup_btn.count() > 0:
-            await signup_btn.click()
-            await self.page.wait_for_timeout(2000)
+        # Coba beberapa selector
+        selectors = [
+            'button:has-text("Sign up")',
+            'text=Sign up',
+            'a:has-text("Sign up")',
+            '[data-testid="sign-up"]',
+        ]
+        
+        for selector in selectors:
+            try:
+                elem = self.page.locator(selector).first
+                if await elem.count() > 0:
+                    await elem.click()
+                    await self.page.wait_for_timeout(3000)
+                    print(f"   ✅ Klik Sign up (selector: {selector})")
+                    return True
+            except:
+                continue
+        
+        # Fallback: coba klik elemen yang mengandung text "Sign up"
+        all_elements = self.page.locator('*:has-text("Sign up")')
+        count = await all_elements.count()
+        if count > 0:
+            await all_elements.first.click()
+            await self.page.wait_for_timeout(3000)
+            print("   ✅ Klik Sign up (fallback text)")
             return True
+        
         return False
     
     async def _step_fill_form(self) -> bool:
         """Mengisi form registrasi"""
-        # Email
-        email_input = self.page.locator('input[placeholder*="Email"], input[name="email"]')
-        await email_input.fill(self.email)
-        await self.page.wait_for_timeout(500)
+        # Email - coba beberapa selector
+        email_selectors = [
+            'input[name="email"]',
+            'input[type="email"]',
+            'input[placeholder*="Email"]',
+            'input[placeholder*="email"]',
+        ]
+        
+        email_filled = False
+        for selector in email_selectors:
+            try:
+                email_input = self.page.locator(selector).first
+                if await email_input.count() > 0:
+                    await email_input.fill(self.email)
+                    await self.page.wait_for_timeout(500)
+                    email_filled = True
+                    print(f"   ✍️  Email: {self.email} (selector: {selector})")
+                    break
+            except:
+                continue
+        
+        if not email_filled:
+            # Fallback: cari input pertama setelah Sign up
+            all_inputs = self.page.locator('input[type="text"], input:not([type])')
+            count = await all_inputs.count()
+            if count > 0:
+                await all_inputs.first.fill(self.email)
+                email_filled = True
+                print(f"   ✍️  Email: {self.email} (fallback)")
         
         # Password
-        pwd_inputs = self.page.locator('input[type="password"]')
-        if await pwd_inputs.count() >= 1:
-            await pwd_inputs.first.fill(self.password)
-            await self.page.wait_for_timeout(500)
+        pwd_selectors = [
+            'input[name="password"]',
+            'input[type="password"]',
+        ]
+        
+        for selector in pwd_selectors:
+            try:
+                pwd_input = self.page.locator(selector).first
+                if await pwd_input.count() > 0:
+                    await pwd_input.fill(self.password)
+                    await self.page.wait_for_timeout(500)
+                    print(f"   🔑 Password diisi")
+                    break
+            except:
+                continue
         
         # Confirm password
-        if await pwd_inputs.count() >= 2:
+        repwd_selectors = [
+            'input[name="repassword"]',
+            'input[type="password"]',
+        ]
+        
+        pwd_inputs = self.page.locator('input[type="password"]')
+        pwd_count = await pwd_inputs.count()
+        if pwd_count >= 2:
             await pwd_inputs.last.fill(self.password)
             await self.page.wait_for_timeout(500)
+            print(f"   🔑 Confirm password diisi")
         
         # Agreement checkbox
         checkbox = self.page.locator('input[type="checkbox"]').first
         if await checkbox.count() > 0:
-            await checkbox.check()
-            await self.page.wait_for_timeout(500)
+            is_checked = await checkbox.is_checked()
+            if not is_checked:
+                await checkbox.check()
+                await self.page.wait_for_timeout(500)
+                print(f"   ☑️  Agreement dicentang")
         
-        print(f"   ✍️  Form terisi: {self.email}")
-        return True
+        return email_filled
     
     async def _step_solve_recaptcha(self) -> bool:
         """Menyelesaikan reCAPTCHA"""
-        next_btn = self.page.locator('button:has-text("Next")')
-        await next_btn.click()
-        await self.page.wait_for_timeout(5000)
+        # Cari tombol Next/Submit
+        next_selectors = [
+            'button:has-text("Next")',
+            'button:has-text("Submit")',
+            'button[type="submit"]',
+        ]
+        
+        for selector in next_selectors:
+            try:
+                next_btn = self.page.locator(selector).first
+                if await next_btn.count() > 0:
+                    await next_btn.click()
+                    await self.page.wait_for_timeout(5000)
+                    print(f"   🤖 Klik {selector}")
+                    break
+            except:
+                continue
         
         # reCAPTCHA biasanya auto-solved di Playwright
         print("   🤖 reCAPTCHA diselesaikan")
