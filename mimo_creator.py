@@ -26,6 +26,13 @@ except ImportError:
     print("   Jalankan: pip install playwright && playwright install chromium")
     sys.exit(1)
 
+try:
+    from playwright_stealth import Stealth
+    stealth_instance = Stealth()
+except ImportError:
+    stealth_instance = None
+    print("⚠️  playwright-stealth tidak diinstall, reCAPTCHA mungkin tidak auto-solve")
+
 
 # ============================================
 # KONFIGURASI
@@ -88,10 +95,19 @@ class MiMoCreator:
         
         browser = await playwright.chromium.launch(
             headless=self.config['headless'],
-            slow_mo=500  # Slow down untuk visibility
+            slow_mo=300
         )
-        self.context = await browser.new_context()
+        self.context = await browser.new_context(
+            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+            viewport={'width': 1280, 'height': 720},
+            locale='en-US',
+        )
         self.page = await self.context.new_page()
+        
+        # Apply stealth untuk bypass reCAPTCHA detection
+        if stealth_instance:
+            await stealth_instance.apply_stealth_async(self.page)
+            print("   🛡️  Stealth mode aktif")
         
         try:
             # STEP 1: Buka temp email & ambil email address
@@ -143,7 +159,7 @@ class MiMoCreator:
             if count > 0:
                 # reCAPTCHA ditemukan - coba auto-solve
                 frame = recaptcha.first
-                content_frame = await frame.content_frame()
+                content_frame = frame.content_frame
                 if content_frame:
                     checkbox_el = content_frame.locator('#recaptcha-anchor')
                     if await checkbox_el.count() > 0:
