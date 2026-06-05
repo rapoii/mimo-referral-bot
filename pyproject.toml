@@ -31,9 +31,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/rfpermana/mimo-referral-bot"
-Repository = "https://github.com/rfpermana/mimo-referral-bot"
-Issues = "https://github.com/rfpermana/mimo-referral-bot/issues"
+Homepage = "https://github.com/rapoii/mimo-referral-bot"
+Repository = "https://github.com/rapoii/mimo-referral-bot"
+Issues = "https://github.com/rapoii/mimo-referral-bot/issues"
 
 [project.scripts]
 mimo-bot = "mimo_creator:main"

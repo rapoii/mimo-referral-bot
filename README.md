@@ -36,7 +36,7 @@ mimo-referral-bot/
 
 ```bash
 # Clone repository
-git clone https://github.com/rfpermana/mimo-referral-bot.git
+git clone https://github.com/rapoii/mimo-referral-bot.git
 cd mimo-referral-bot
 
 # Install dependencies
@@ -210,4 +210,4 @@ If you find this useful, give it a ⭐ on GitHub!
 
 ## 📞 Contact
 
-- GitHub: [@rfpermana](https://github.com/rfpermana)
+- GitHub: [@rapoii](https://github.com/rapoii)
