@@ -20,11 +20,16 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List
 
 try:
-    from playwright.async_api import async_playwright, Page, BrowserContext
+    from patchright.async_api import async_playwright, Page, BrowserContext
+    print("✅ Patchright loaded (anti-detection Playwright)")
 except ImportError:
-    print("❌ Error: Playwright belum diinstall!")
-    print("   Jalankan: pip install playwright && playwright install chromium")
-    sys.exit(1)
+    try:
+        from playwright.async_api import async_playwright, Page, BrowserContext
+        print("⚠️  Using standard Playwright (patchright not found)")
+    except ImportError:
+        print("❌ Error: Playwright/Patchright belum diinstall!")
+        print("   Jalankan: pip install patchright && python -m patchright install chromium")
+        sys.exit(1)
 
 try:
     from playwright_stealth import Stealth
