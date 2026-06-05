@@ -149,70 +149,16 @@ class MiMoCreator:
             await checkbox.check()
             print(f"   ☑️  Agreement dicentang")
             
-            # STEP 4: Klik Next + handle reCAPTCHA
+            # STEP 4: Klik Next + handle reCAPTCHA (SMART DETECTION)
             print("\n🔒 [4/8] Klik Next & handle reCAPTCHA...")
             next_btn = self.page.locator('button:has-text("Next")')
             await next_btn.click()
             await self.page.wait_for_timeout(3000)
             
-            # Cek reCAPTCHA (muncul SETELAH klik Next)
-            print("   🔍 Mencari reCAPTCHA...")
-            recaptcha = self.page.locator('iframe[src*="recaptcha"], iframe[title*="reCAPTCHA"], .g-recaptcha')
-            count = await recaptcha.count()
-            print(f"   📊 reCAPTCHA elements: {count}")
-            
-            if count > 0:
-                # reCAPTCHA ditemukan - coba auto-solve
-                frame = recaptcha.first
-                content_frame = frame.content_frame
-                if content_frame:
-                    checkbox_el = content_frame.locator('#recaptcha-anchor')
-                    if await checkbox_el.count() > 0:
-                        print("   ☑️  Klik reCAPTCHA checkbox...")
-                        await checkbox_el.click()
-                        await self.page.wait_for_timeout(5000)
-                        
-                        # Cek apakah solved
-                        for i in range(30):
-                            try:
-                                checked = await checkbox_el.get_attribute('aria-checked')
-                                if checked == 'true':
-                                    print("   ✅ reCAPTCHA auto-solved!")
-                                    break
-                                
-                                # Cek challenge
-                                challenge = content_frame.locator('.rc-imageselect-challenge')
-                                if await challenge.count() > 0:
-                                    print("")
-                                    print("   " + "="*50)
-                                    print("   ⚠️  IMAGE CHALLENGE TERDETEKSI!")
-                                    print("   ⚠️  Silakan solve MANUAL di browser!")
-                                    print("   ⏳ Menunggu 120 detik...")
-                                    print("   " + "="*50)
-                                    print("")
-                                    await self.page.wait_for_timeout(120000)
-                                    break
-                                
-                                await self.page.wait_for_timeout(1000)
-                            except:
-                                await self.page.wait_for_timeout(1000)
-            else:
-                # Tidak ada reCAPTCHA iframe - mungkin ada challenge popup
-                # Atau reCAPTCHA belum load - tunggu lebih lama
-                await self.page.wait_for_timeout(5000)
-                
-                # Cek apakah sudah redirect ke verify
-                current_url = self.page.url
-                if 'verify' not in current_url and 'code' not in current_url:
-                    print("")
-                    print("   " + "="*50)
-                    print("   ⚠️  reCAPTCHA MUNGKIN MUNCUL SEBAGAI POPUP")
-                    print("   ⚠️  Silakan solve MANUAL di browser!")
-                    print("   ⏳ Menunggu 120 detik untuk solve...")
-                    print("   " + "="*50)
-                    print("")
-                    # Tunggu user solve manual
-                    await self.page.wait_for_timeout(120000)
+            # SMART reCAPTCHA handling
+            solved = await self._handle_recaptcha()
+            if not solved:
+                raise Exception("reCAPTCHA gagal di-solve")
             
             # Cek apakah sudah redirect ke verify
             await self.page.wait_for_timeout(3000)
@@ -402,6 +348,118 @@ class MiMoCreator:
         print(f"🔗 Referral: {self.referral}")
         print(f"{'='*50}")
 
+    async def _handle_recaptcha(self) -> bool:
+        """Smart reCAPTCHA handler:
+        1. Click checkbox → wait 3s
+        2. If auto-solved (verify page) → return True
+        3. If image challenge → pause, wait for user input
+        4. If still unsolved → retry once, then ask user
+        """
+        print("   🔍 Mencari reCAPTCHA...")
+        recaptcha = self.page.locator('iframe[src*="recaptcha"], iframe[title*="reCAPTCHA"], .g-recaptcha')
+        count = await recaptcha.count()
+        
+        if count == 0:
+            # Tidak ada reCAPTCHA iframe, cek apakah sudah lanjut
+            await self.page.wait_for_timeout(3000)
+            current_url = self.page.url
+            if 'verify' in current_url or 'code' in current_url:
+                print("   ✅ Tidak ada reCAPTCHA, langsung lanjut!")
+                return True
+            # Mungkin reCAPTCHA belum load, tunggu
+            print("   ⏳ reCAPTCHA belum terdeteksi, tunggu 5s...")
+            await self.page.wait_for_timeout(5000)
+            return True  # Lanjut saja, mungkin memang tidak ada
+        
+        # reCAPTCHA ditemukan - coba auto-solve
+        frame = recaptcha.first
+        content_frame = frame.content_frame
+        if not content_frame:
+            print("   ⚠️  Tidak bisa akses reCAPTCHA frame")
+            return await self._wait_for_manual_solve()
+        
+        checkbox_el = content_frame.locator('#recaptcha-anchor')
+        if await checkbox_el.count() == 0:
+            return await self._wait_for_manual_solve()
+        
+        print("   ☑️  Klik reCAPTCHA checkbox...")
+        await checkbox_el.click()
+        await self.page.wait_for_timeout(3000)
+        
+        # Cek hasil auto-solve
+        try:
+            checked = await checkbox_el.get_attribute('aria-checked')
+            if checked == 'true':
+                print("   ✅ reCAPTCHA auto-solved!")
+                return True
+        except:
+            pass
+        
+        # Cek apakah muncul image challenge
+        challenge = content_frame.locator('.rc-imageselect-challenge, .rc-imageselect-incorrect')
+        if await challenge.count() > 0:
+            print("")
+            print("   " + "="*50)
+            print("   ⚠️  IMAGE CHALLENGE TERDETEKSI!")
+            print("   ⚠️  Silakan solve MANUAL di browser!")
+            print("   " + "="*50)
+            print("")
+            return await self._wait_for_manual_solve()
+        
+        # Belum solved, belum image challenge - tunggu sebentar
+        await self.page.wait_for_timeout(3000)
+        
+        # Cek lagi
+        try:
+            checked = await checkbox_el.get_attribute('aria-checked')
+            if checked == 'true':
+                print("   ✅ reCAPTCHA auto-solved (delayed)!")
+                return True
+        except:
+            pass
+        
+        # Masih belum solved - minta user solve
+        print("   ⚠️  reCAPTCHA belum solved, minta bantuan user...")
+        return await self._wait_for_manual_solve()
+
+    async def _wait_for_manual_solve(self) -> bool:
+        """Tunggu user solve reCAPTCHA manual via terminal input."""
+        print("")
+        print("   " + "="*50)
+        print("   🧑 SOLVE reCAPTCHA DI BROWSER SEKARANG!")
+        print("   Setelah selesai, balik ke sini dan tekan ENTER")
+        print("   " + "="*50)
+        print("")
+        
+        loop = asyncio.get_event_loop()
+        try:
+            # Tunggu user tekan Enter (blocking input di thread terpisah)
+            await loop.run_in_executor(None, lambda: input("   ⏳ Tekan ENTER setelah selesai solve... "))
+        except EOFError:
+            # Kalau tidak ada stdin (headless mode), tunggu 60 detik
+            print("   ⏳ Tidak ada input, menunggu 60 detik...")
+            await self.page.wait_for_timeout(60000)
+        
+        # Verifikasi apakah sudah solved
+        await self.page.wait_for_timeout(2000)
+        current_url = self.page.url
+        if 'verify' in current_url or 'code' in current_url:
+            print("   ✅ reCAPTCHA solved! Melanjutkan...")
+            return True
+        
+        # Cek apakah Next perlu diklik lagi
+        next_btn = self.page.locator('button:has-text("Next"):not([disabled])')
+        if await next_btn.count() > 0:
+            await next_btn.click()
+            await self.page.wait_for_timeout(3000)
+            current_url = self.page.url
+            if 'verify' in current_url or 'code' in current_url:
+                print("   ✅ reCAPTCHA solved! Melanjutkan...")
+                return True
+        
+        print("   ❌ reCAPTCHA masih belum solved")
+        return False
+
     def _print_success(self) -> None:
         print(f"\n{'='*50}")
         print(f"✅ AKUN BERHASIL DIBUAT!")
@@ -480,7 +538,7 @@ async def main():
     
     print("""
 ╔══════════════════════════════════════════════╗
-║        🤖 MiMo Referral Bot v1.0            ║
+║        🤖 MiMo Referral Bot v1.1            ║
 ║        Automated Account Creator             ║
 ╚══════════════════════════════════════════════╝
     """)

@@ -6,7 +6,7 @@ Automated Xiaomi MiMo account creator with referral system and API key generatio
 
 - 📧 Auto temp email generation
 - 🔄 Automated Xiaomi account registration
-- 🤖 reCAPTCHA auto-solve
+- 🤖 reCAPTCHA smart handling (auto-solve checkbox, manual fallback for image challenges)
 - 📬 Email verification automation
 - 🎁 Referral code auto-apply (+$2 credits)
 - 🔑 API Key auto-creation
@@ -78,6 +78,19 @@ python mimo_creator.py --config config.json
 ```bash
 python mimo_creator.py --headless
 ```
+
+## 🔒 reCAPTCHA Handling
+
+Script menggunakan **smart detection** untuk reCAPTCHA:
+
+1. **Auto-solve** — Klik checkbox, tunggu 3 detik. Jika solved otomatis → lanjut tanpa interupsi
+2. **Image challenge** — Jika muncul grid gambar, script pause dan minta user solve manual di browser. Setelah selesai, tekan ENTER di terminal untuk melanjutkan
+3. **Fallback** — Jika auto-solve gagal dan bukan image challenge, script minta user solve manual
+
+**Tips:**
+- Fresh IP biasanya auto-solve berhasil (~80% chance)
+- Setelah 5+ attempt dari IP sama, Google flag IP → image challenge muncul terus
+- Solusi: tunggu 30-60 menit atau ganti IP/VPN
 
 ## ⚙️ Configuration
 
