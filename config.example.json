@@ -1,0 +1,8 @@
+{
+  "referral_code": "CJZ295",
+  "password": "papoi123",
+  "temp_email_domain": "banri.xyz",
+  "headless": false,
+  "delay_between_accounts": [10, 30],
+  "output_dir": "output"
+}
